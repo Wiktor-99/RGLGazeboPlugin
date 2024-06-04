@@ -80,6 +80,7 @@ bool RGLServerPluginInstance::LoadConfiguration(const std::shared_ptr<const sdf:
 
     // Resize container for result point cloud
     resultPointCloud.resize(lidarPattern.size());
+    resultIntensity.resize(lidarPattern.size());
 
     return true;
 }
@@ -98,6 +99,7 @@ void RGLServerPluginInstance::CreateLidar(gz::sim::Entity entity,
     // set desired fields for API call
     std::vector<rgl_field_t> yieldFields;
     yieldFields.push_back(RGL_FIELD_XYZ_F32);
+    yieldFields.push_back(RGL_FIELD_INTENSITY_F32);
 
     if (publishLaserScan) {
         yieldFields.push_back(RGL_FIELD_DISTANCE_F32);
@@ -194,10 +196,10 @@ void RGLServerPluginInstance::RayTrace(std::chrono::steady_clock::duration simTi
 
     if (!publishLaserScan) {
         if (!CheckRGL(rgl_graph_get_result_size(rglNodeYield, RGL_FIELD_XYZ_F32, &hitpointCount, nullptr)) ||
-            !CheckRGL(rgl_graph_get_result_data(rglNodeYield, RGL_FIELD_XYZ_F32, resultPointCloud.data()))) {
-
-            ignerr << "Failed to get result data from RGL lidar.\n";
-            return;
+            !CheckRGL(rgl_graph_get_result_data(rglNodeYield, RGL_FIELD_XYZ_F32, resultPointCloud.data())) ||
+            !CheckRGL(rgl_graph_get_result_data(rglNodeYield, RGL_FIELD_INTENSITY_F32, resultIntensity.data()))) {
+                ignerr << "Failed to get result data from RGL lidar.\n";
+                return;
             }
     } else {
         if (!CheckRGL(rgl_graph_get_result_size(rglNodeYield, RGL_FIELD_DISTANCE_F32, &hitpointCount, nullptr)) ||
@@ -217,8 +219,9 @@ void RGLServerPluginInstance::RayTrace(std::chrono::steady_clock::duration simTi
     }
 
     if (pointCloudWorldPublisher.HasConnections()) {
-        if (!CheckRGL(rgl_graph_get_result_size(rglNodeToLidarFrame, RGL_FIELD_XYZ_F32, &hitpointCount, nullptr)) ||
-            !CheckRGL(rgl_graph_get_result_data(rglNodeCompact, RGL_FIELD_XYZ_F32, resultPointCloud.data()))) {
+        if (!CheckRGL(rgl_graph_get_result_size(rglNodeYield, RGL_FIELD_XYZ_F32, &hitpointCount, nullptr)) ||
+            !CheckRGL(rgl_graph_get_result_data(rglNodeYield, RGL_FIELD_XYZ_F32, resultPointCloud.data())) ||
+            !CheckRGL(rgl_graph_get_result_data(rglNodeYield, RGL_FIELD_INTENSITY_F32, resultIntensity.data()))) {
 
             ignerr << "Failed to get visualization data from RGL lidar.\n";
             return;
@@ -262,14 +265,36 @@ gz::msgs::PointCloudPacked RGLServerPluginInstance::CreatePointCloudMsg(std::chr
 {
     gz::msgs::PointCloudPacked outMsg;
     gz::msgs::InitPointCloudPacked(outMsg, frame, false,
-                                         {{"xyz", gz::msgs::PointCloudPacked::Field::FLOAT32}});
-    outMsg.mutable_data()->resize(hitpointCount * outMsg.point_step());
+        {
+            {"xyz", gz::msgs::PointCloudPacked::Field::FLOAT32},
+            {"intensity", gz::msgs::PointCloudPacked::Field::FLOAT32},
+        });
+
+    outMsg.mutable_data()->resize((hitpointCount * outMsg.point_step()));
     *outMsg.mutable_header()->mutable_stamp() = gz::msgs::Convert(simTime);
     outMsg.set_height(1);
     outMsg.set_width(hitpointCount);
 
-    gz::msgs::PointCloudPackedIterator<float> xIterWorld(outMsg, "x");
-    memcpy(&(*xIterWorld), resultPointCloud.data(), hitpointCount * sizeof(rgl_vec3f));
+    std::string *msgBuffer = outMsg.mutable_data();
+    char *msgBufferIndex = msgBuffer->data();
+    for (uint32_t i = 0; i < hitpointCount; ++i)
+    {
+      int fieldIndex = 0;
+      *reinterpret_cast<float *>(msgBufferIndex +
+          outMsg.field(fieldIndex++).offset()) = resultPointCloud[i].value[0];
+
+      *reinterpret_cast<float *>(msgBufferIndex +
+          outMsg.field(fieldIndex++).offset()) = resultPointCloud[i].value[1];
+
+      *reinterpret_cast<float *>(msgBufferIndex +
+          outMsg.field(fieldIndex++).offset()) = resultPointCloud[i].value[2];
+
+      *reinterpret_cast<float *>(msgBufferIndex +
+          outMsg.field(fieldIndex++).offset()) = resultIntensity[i];
+
+      msgBufferIndex += outMsg.point_step();
+    }
+
     return outMsg;
 }
 

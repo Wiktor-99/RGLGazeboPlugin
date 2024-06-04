@@ -85,6 +85,7 @@ private:
     std::vector<rgl_mat3x4f> lidarPattern;
     std::vector<rgl_vec3f> resultPointCloud;
     std::vector<float> resultDistances;
+    std::vector<float> resultIntensity;
 
     bool updateOnPausedSim = false;
     bool publishLaserScan = false;
